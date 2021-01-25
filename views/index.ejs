@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <link rel="stylesheet" text="text/css" href="styles.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+
+<body>
+    <div>
+        Video: <select id="camera"></select>
+    </div>
+
+    <video id="myVideoTag" autoplay></video>
+    <video id="theirVideoTag" autoplay></video>
+    <canvas id="profilePicCanvas" style="display: none;"></canvas>
+    <div>
+        <img id="profilePictureOutput" />
+    </div>
+    <p><button id="takeProfilePicture" type="button" autofocus="true">Create Profile Picture</button></p>
+    <div>
+        <label>Your name</label>
+        <input id="myName" type="text" />
+        <label>Message</label>
+        <input id="myMessage" type="text" />
+        <input id="sendMessage" type="submit" />
+        <div id="chatArea">
+            Message output: </br>
+        </div>
+    </div>
+    <script>
+
+        var videoArea = document.querySelector("#myVideoTag");
+        var theirVideoArea = document.querySelector('#theirVideoTag')
+        var videoSelect = document.querySelector('#camera')
+        var profilePicCanvas = document.querySelector('#profilePicCanvas')
+        var profilePictureOutput = document.querySelector('#profilePictureOutput')
+        var takeProfilePicture = document.querySelector('#takeProfilePicture')
+        var videoTag = document.querySelector('#myVideoTag')
+        var myName = document.querySelector('#myName')
+        var myMessage = document.querySelector('#myMessage')
+        var sendMessage = document.querySelector('#sendMessage')
+        var charArea = document.querySelector('#chatArea')
+        var ROOM = "chat"
+
+
+
+        var width = 240
+        var height = 0
+        var streaming = false
+
+        takeProfilePicture.addEventListener('click', function (ev) {
+            takeProfilePic()
+            ev.preventDefault()
+        }, false)
+
+        videoTag.addEventListener('canplay', function (ev) {
+            if (!streaming) {
+                height = videoTag.videoHeight / (videoTag.videoWidth / width)
+
+                if (isNaN(height)) {
+                    height = width / (4 / 3)
+                }
+
+                videoTag.setAttribute('width', width)
+                videoTag.setAttribute('height', height)
+                profilePicCanvas.setAttribute('width', width)
+                profilePicCanvas.setAttribute('height', height)
+                streaming = true
+            }
+        }, false)
+
+        function takeProfilePic() {
+            var context = profilePicCanvas.getContext('2d')
+            if (width && height) {
+                profilePicCanvas.width = width
+                profilePicCanvas.height = height
+                context.drawImage(videoTag, 0, 0, width, height)
+                var data = profilePicCanvas.toDataURL('image/png')
+                profilePictureOutput.setAttribute('src', data)
+            }
+        }
+
+        navigator.mediaDevices.enumerateDevices()
+            .then(devices => {
+                devices.forEach(device => {
+                    var option = document.createElement('option')
+                    option.value = device.id
+                    if (device.kind === 'videoinput') {
+                        option.text = device.label || 'camera' + (videoSelect.length + 1)
+                        videoSelect.appendChild(option)
+                    }
+                })
+            })
+            .catch(err => {
+                console.log(err.name, err.message);
+            })
+
+
+
+
+
+
+        videoArea.className = "grayscale_filter"
+
+        // startStream()
+        io = io.connect();
+        io.emit('ready', ROOM)
+
+        io.on('announce', function (data) {
+            displayMessage(data.message)
+        })
+
+        io.on('message', function (data) {
+            displayMessage(data.author + ": " + data.message)
+        })
+
+
+        sendMessage.addEventListener('click', function (ev) {
+            io.emit('send', { "author": myName.value, "message": myMessage.value, "room": ROOM })
+            ev.preventDefault()
+        }, false)
+
+        function displayMessage(message) {
+            charArea.innerHTML = charArea.innerHTML + "</br>" + message
+        }
+
+        // var videoSettings = {
+        //     mandatory: {
+        //         maxWidth: 240,
+        //         maxHeight: 240,
+        //         minHeight: 240,
+        //         minWidth: 240
+        //     },
+        //     optional: [{
+        //         sourceId: videoSource
+        //     }]
+        // }
+
+        function startStream() {
+            navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+            var videoSource = videoSelect.value
+            var constraintObj = {
+                audio: true,
+                video: true,
+            };
+            navigator.mediaDevices.getUserMedia(constraintObj)
+                .then(function (mediaStreamObj) {
+                    if ("srcObject" in videoArea) {
+                        videoArea.srcObject = mediaStreamObj;
+                    } else {
+                        //old version
+                        videoArea.src = window.URL.createObjectURL(mediaStreamObj);
+                    }
+
+                });
+        };
+
+
+    </script>
+</body>
+
+</html>
