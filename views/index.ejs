@@ -10,26 +10,16 @@
 </head>
 
 <body>
-    <div>
-        Video: <select id="camera"></select>
-    </div>
-
     <video id="myVideoTag" autoplay></video>
     <video id="theirVideoTag" autoplay></video>
-    <canvas id="profilePicCanvas" style="display: none;"></canvas>
-    <div>
-        <img id="profilePictureOutput" />
-    </div>
-    <p><button id="takeProfilePicture" type="button" autofocus="true">Create Profile Picture</button></p>
     <div>
         <label>Your name</label>
         <input id="myName" type="text" />
         <label>Message</label>
         <input id="myMessage" type="text" />
         <input id="sendMessage" type="submit" />
-        <div id="chatArea">
-            Message output: </br>
-        </div>
+        <div id="chatArea"> Message output: </br></div>
+        <div id="signalingArea"> Signaling messages: </br> </div>
     </div>
     <script>
 
@@ -44,71 +34,25 @@
         var myMessage = document.querySelector('#myMessage')
         var sendMessage = document.querySelector('#sendMessage')
         var charArea = document.querySelector('#chatArea')
+        var signalingArea = document.querySelector('#signalingArea')
         var ROOM = "chat"
+        var SIGNAL_ROOM = 'signal_room'
 
-
-
-        var width = 240
-        var height = 0
-        var streaming = false
-
-        takeProfilePicture.addEventListener('click', function (ev) {
-            takeProfilePic()
-            ev.preventDefault()
-        }, false)
-
-        videoTag.addEventListener('canplay', function (ev) {
-            if (!streaming) {
-                height = videoTag.videoHeight / (videoTag.videoWidth / width)
-
-                if (isNaN(height)) {
-                    height = width / (4 / 3)
+        var configuration = {
+            'iceServers': [
+                {
+                    'url': 'stun:stun.l.google.com:19302'
                 }
-
-                videoTag.setAttribute('width', width)
-                videoTag.setAttribute('height', height)
-                profilePicCanvas.setAttribute('width', width)
-                profilePicCanvas.setAttribute('height', height)
-                streaming = true
-            }
-        }, false)
-
-        function takeProfilePic() {
-            var context = profilePicCanvas.getContext('2d')
-            if (width && height) {
-                profilePicCanvas.width = width
-                profilePicCanvas.height = height
-                context.drawImage(videoTag, 0, 0, width, height)
-                var data = profilePicCanvas.toDataURL('image/png')
-                profilePictureOutput.setAttribute('src', data)
-            }
+            ]
         }
 
-        navigator.mediaDevices.enumerateDevices()
-            .then(devices => {
-                devices.forEach(device => {
-                    var option = document.createElement('option')
-                    option.value = device.id
-                    if (device.kind === 'videoinput') {
-                        option.text = device.label || 'camera' + (videoSelect.length + 1)
-                        videoSelect.appendChild(option)
-                    }
-                })
-            })
-            .catch(err => {
-                console.log(err.name, err.message);
-            })
+        var rtcPeerConn;
 
 
-
-
-
-
-        videoArea.className = "grayscale_filter"
-
-        // startStream()
         io = io.connect();
-        io.emit('ready', ROOM)
+        io.emit('ready', { "chat_room": ROOM, 'signal_room': SIGNAL_ROOM })
+
+        io.emit('signal', { "type": 'user_here', "message": "Are you ready for a call?", room: SIGNAL_ROOM })
 
         io.on('announce', function (data) {
             displayMessage(data.message)
@@ -117,6 +61,89 @@
         io.on('message', function (data) {
             displayMessage(data.author + ": " + data.message)
         })
+
+        io.on('signaling_message', function (data) {
+            displaySignalingMessage("Signal received: " + data.type)
+
+            // Setup the RTC Peer Connection object
+            if (!rtcPeerConn)
+                startSignaling()
+            if (data.type != 'user_here') {
+                var message = JSON.parse(data.message);
+                if (message.sdp) {
+
+                    rtcPeerConn.setRemoteDescription(new RTCSessionDescription(message.sdp), function () {
+                        // if we recieved an offer, we need to answer
+                        if (rtcPeerConn.remoteDescription.type == 'offer') {
+                            rtcPeerConn.createAnswer(sendLocalDesc, logError);
+                        }
+                    }, logError);
+                }
+                else {
+                    if (message.candidate) {
+                        rtcPeerConn.addIceCandidate(new RTCIceCandidate(message.candidate));
+                    }
+
+                }
+            }
+        })
+
+        function startSignaling() {
+            displaySignalingMessage("starting signaling...")
+            rtcPeerConn = new webkitRTCPeerConnection(configuration)
+
+            // send any ice candidates to the other peer
+            rtcPeerConn.onicecandidate = function (evt) {
+                if (evt.candidate) {
+                    io.emit('signal', {
+                        "type": "ice candidate", "message": JSON.stringify({
+                            'candidate': evt.candidate
+                        }), "room": SIGNAL_ROOM
+                    })
+                    displaySignalingMessage("competed the ice candidate...")
+                }
+            }
+
+            // let the 'negotiationneeded' event trigger offer generation
+            rtcPeerConn.onnegotiationneeded = function () {
+                console.log(" on negotiation called");
+                rtcPeerConn.createOffer(sendLocalDesc, logError);
+            };
+
+
+            // once remote stream arrives, show it in the main video element
+            rtcPeerConn.onaddstream = function (evt) {
+                console.log("going to add their stream");
+                theirVideoArea.srcObject = evt.stream
+            };
+
+
+            // get a local stream, show it in our video tag and add it to be sent
+            navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+            navigator.getUserMedia({
+                'audio': false,
+                'video': true
+            }, function (stream) {
+                console.log("going to display my stream...");
+                videoArea.srcObject = stream;
+                rtcPeerConn.addStream(stream);
+            }, logError);
+
+
+        }
+
+
+        function sendLocalDesc(desc) {
+            rtcPeerConn.setLocalDescription(desc, function () {
+                console.log("sending local description");
+                io.emit('signal', { "type": "SDP", "message": JSON.stringify({ 'sdp': rtcPeerConn.localDescription }), "room": SIGNAL_ROOM });
+            }, logError);
+        }
+
+
+        function logError(error) {
+            displaySignalingMessage(error.name + ': ' + error.message)
+        }
 
 
         sendMessage.addEventListener('click', function (ev) {
@@ -128,36 +155,10 @@
             charArea.innerHTML = charArea.innerHTML + "</br>" + message
         }
 
-        // var videoSettings = {
-        //     mandatory: {
-        //         maxWidth: 240,
-        //         maxHeight: 240,
-        //         minHeight: 240,
-        //         minWidth: 240
-        //     },
-        //     optional: [{
-        //         sourceId: videoSource
-        //     }]
-        // }
 
-        function startStream() {
-            navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
-            var videoSource = videoSelect.value
-            var constraintObj = {
-                audio: true,
-                video: true,
-            };
-            navigator.mediaDevices.getUserMedia(constraintObj)
-                .then(function (mediaStreamObj) {
-                    if ("srcObject" in videoArea) {
-                        videoArea.srcObject = mediaStreamObj;
-                    } else {
-                        //old version
-                        videoArea.src = window.URL.createObjectURL(mediaStreamObj);
-                    }
-
-                });
-        };
+        function displaySignalingMessage(message) {
+            signalingArea.innerHTML = signalingArea.innerHTML + "</br>" + message
+        }
 
 
     </script>

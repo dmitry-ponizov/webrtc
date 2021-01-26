@@ -12,7 +12,8 @@ app.get("/", function (req, res) {
 });
 
 app.io.route("ready", function (req) {
-  req.io.join(req.data);
+  req.io.join(req.data.chat_room);
+  req.io.join(req.data.signal_room);
   app.io.room(req.data).broadcast("announce", {
     message: "New client in the " + req.data + " room.",
   });
@@ -26,12 +27,9 @@ app.io.route("send", function (req) {
 });
 
 app.io.route("signal", function (req) {
-  req.io.join(req.data);
-  app.io.room(req.data).broadcast("signal", {
-    user_type: req.data.user_type,
-    user_name: req.data.user_name,
-    user_data: req.data.user_data,
-    command: req.data.command,
+  req.io.room(req.data.room).broadcast("signaling_message", {
+    type: req.data.type,
+    message: req.data.message,
   });
 });
 
